@@ -908,9 +908,6 @@ const stateHeadReject = async (req, res) => {
       newStatus: "state_head_rejected",
     });
 
-    // ==========================================
-    // NOTIFICATION
-    // ==========================================
 
     try {
       const recipients = [];
