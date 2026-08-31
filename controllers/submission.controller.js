@@ -3,43 +3,45 @@ const mongoose = require("mongoose");
 const Site = require("../models/Site");
 const SiteSubmission = require("../models/SiteSubmission");
 
-const { createHistory } = require("../services/history.service");
+const {
+  requireCampaignAccess,
+  buildAssignedSiteFilter,
+} = require("../services/campaignAccess.service");
 
+const {
+  createHistory,
+} = require("../services/history.service");
 
-// ======================================================
-// HELPER: AUTH USER
-// ======================================================
+// =====================================================
+// HELPERS
+// =====================================================
 
 const getUserId = (req) => {
-  return req?.user?._id || req?.user?.id || null;
+  return (
+    req?.user?._id ||
+    req?.user?.id ||
+    null
+  );
 };
 
-
-// ======================================================
-// HELPER: NORMALIZE UPLOAD PATH
-// ======================================================
-//
-// Windows:
-// E:\site-management-system\backend\uploads\abc.jpg
-//
-// Database me save hoga:
-// uploads/abc.jpg
-//
-// Frontend:
-// http://localhost:5000/uploads/abc.jpg
-// ======================================================
+// =====================================================
+// NORMALIZE UPLOAD PATH
+// =====================================================
 
 const normalizeUploadPath = (filePath) => {
-
   if (!filePath) {
     return "";
   }
 
-  let normalized = String(filePath)
-    .replace(/\\/g, "/");
+  let normalized = String(filePath).replace(
+    /\\/g,
+    "/"
+  );
 
-  // uploads ke pehle ka complete path remove karo
-  const uploadsIndex = normalized.lastIndexOf("/uploads/");
+  const uploadsIndex =
+    normalized.toLowerCase().lastIndexOf(
+      "/uploads/"
+    );
 
   if (uploadsIndex !== -1) {
     return normalized.substring(
@@ -47,628 +49,669 @@ const normalizeUploadPath = (filePath) => {
     );
   }
 
-  // Agar path already uploads/ se start ho
-  if (normalized.startsWith("uploads/")) {
+  if (
+    normalized
+      .toLowerCase()
+      .startsWith("uploads/")
+  ) {
     return normalized;
   }
 
-  // Agar sirf filename ho
-  const filename = normalized.split("/").pop();
+  const filename =
+    normalized.split("/").pop();
 
   return `uploads/${filename}`;
 };
 
-
-// ======================================================
+// =====================================================
 // GET MY SUBMISSIONS
-// ======================================================
+//
+// GET /api/submissions?campaign_id=xxx
+//
+// ADMIN:
+// All submissions
+//
+// VENDOR EXECUTIVE:
+// Only submissions uploaded by himself
+// =====================================================
 
-const getMySubmissions = async (req, res) => {
-
+const getMySubmissions = async (
+  req,
+  res
+) => {
   try {
-
-    // ========================================
-    // AUTH CHECK
-    // ========================================
-
     const userId = getUserId(req);
 
-    console.log(
-      "GET MY SUBMISSIONS USER:",
-      req.user
-    );
-
-    console.log(
-      "GET MY SUBMISSIONS USER ID:",
-      userId
-    );
-
     if (!userId) {
-
       return res.status(401).json({
         success: false,
-        message: "User not authenticated",
+        message:
+          "User not authenticated",
       });
-
     }
 
+    // =================================================
+    // CAMPAIGN ACCESS
+    // =================================================
 
-    // ========================================
+    const accessResult =
+      await requireCampaignAccess(
+        req,
+        res
+      );
+
+    if (accessResult.error) {
+      return accessResult.response;
+    }
+
+    const {
+      campaignId,
+      access,
+    } = accessResult;
+
+    // =================================================
+    // FILTER
+    // =================================================
+
+    const filter = {
+      campaign_id: campaignId,
+    };
+
+    // =================================================
+    // NON ADMIN
+    // =================================================
+
+    if (
+      req.user.role !== "admin"
+    ) {
+      filter.uploaded_by = userId;
+    }
+
+    // =================================================
     // GET SUBMISSIONS
-    // ========================================
+    // =================================================
 
     const submissions =
-      await SiteSubmission.find({
-        uploaded_by: userId,
-      })
-
-        // ========================================
-        // SITE
-        // ========================================
-
-        .populate({
-          path: "site",
-
-          select: `
-            site_name
-            site_code
-            state
-            town
-            zone
-            vendor
-            vendor_name
-            location
-            media_type
-            type
-            unit
-            duration
-            width
-            height
-            total_sqr_ft
-            lat
-            long
-            status
-            current_submission
-            history
-          `,
-
-          populate: {
-
-            path: "current_submission",
-
-            populate: [
-              {
-                path: "submitted_by",
-                select: "name email role",
-              },
-
-              {
-                path: "uploaded_by",
-                select: "name email role",
-              },
-            ],
-          },
-        })
-
-        // ========================================
-        // SUBMITTED BY
-        // ========================================
-
+      await SiteSubmission.find(
+        filter
+      )
+        .populate(
+          "site"
+        )
         .populate(
           "submitted_by",
           "name email role"
         )
-
-        // ========================================
-        // UPLOADED BY
-        // ========================================
-
         .populate(
           "uploaded_by",
           "name email role"
         )
-
+        .populate(
+          "vendor",
+          "name email role"
+        )
+        .populate(
+          "state_head",
+          "name email role"
+        )
+        .populate(
+          "client",
+          "name email role"
+        )
         .sort({
           createdAt: -1,
-        });
+        })
+        .lean();
 
+    // =================================================
+    // NON ADMIN SITE ACCESS
+    // =================================================
 
-    // ========================================
+    let finalSubmissions =
+      submissions;
+
+    if (
+      req.user.role !== "admin" &&
+      access
+    ) {
+      const siteFilter =
+        buildAssignedSiteFilter(
+          access
+        );
+
+      const assignedSites =
+        await Site.find({
+          campaign_id:
+            campaignId,
+
+          ...siteFilter,
+        })
+          .select("_id")
+          .lean();
+
+      const assignedSiteIds =
+        new Set(
+          assignedSites.map(
+            (site) =>
+              String(site._id)
+          )
+        );
+
+      finalSubmissions =
+        submissions.filter(
+          (submission) =>
+            submission.site &&
+            assignedSiteIds.has(
+              String(
+                submission.site._id
+              )
+            )
+        );
+    }
+
+    // =================================================
     // RESPONSE
-    // ========================================
+    // =================================================
 
-    return res.status(200).json({
-
+    return res.json({
       success: true,
 
+      campaign_id:
+        campaignId,
+
       count:
-        submissions.length,
+        finalSubmissions.length,
 
-      submissions,
-
+      submissions:
+        finalSubmissions,
     });
-
   } catch (error) {
-
     console.error(
       "GET MY SUBMISSIONS ERROR:",
       error
     );
 
     return res.status(500).json({
-
       success: false,
 
       message:
         error.message ||
         "Failed to get submissions",
-
     });
-
   }
-
 };
 
-
-// ======================================================
+// =====================================================
 // GET SUBMISSION BY ID
-// ======================================================
+//
+// GET /api/submissions/:id?campaign_id=xxx
+// =====================================================
 
-const getSubmissionById = async (req, res) => {
+const getSubmissionById =
+  async (req, res) => {
+    try {
+      const {
+        id,
+      } = req.params;
 
-  try {
+      // =================================================
+      // VALIDATE ID
+      // =================================================
 
-    const { id } = req.params;
-
-
-    // ========================================
-    // ID VALIDATION
-    // ========================================
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message: "Invalid submission ID",
-
-      });
-
-    }
-
-
-    console.log(
-      "GET SUBMISSION ID:",
-      id
-    );
-
-
-    // ========================================
-    // FIND SUBMISSION
-    // ========================================
-
-    const submission =
-      await SiteSubmission.findById(id)
-
-        // ========================================
-        // SITE
-        // ========================================
-
-        .populate({
-          path: "site",
-
-          select: `
-            site_name
-            site_code
-            state
-            town
-            zone
-            vendor
-            vendor_name
-            location
-            media_type
-            type
-            unit
-            duration
-            width
-            height
-            total_sqr_ft
-            lat
-            long
-            status
-            current_submission
-            history
-          `,
-
-          populate: {
-
-            path: "current_submission",
-
-            populate: [
-              {
-                path: "submitted_by",
-                select: "name email role",
-              },
-
-              {
-                path: "uploaded_by",
-                select: "name email role",
-              },
-            ],
-          },
-        })
-
-        // ========================================
-        // SUBMITTED BY
-        // ========================================
-
-        .populate(
-          "submitted_by",
-          "name email role"
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          id
         )
+      ) {
+        return res.status(400).json({
+          success: false,
 
-        // ========================================
-        // UPLOADED BY
-        // ========================================
+          message:
+            "Invalid submission ID",
+        });
+      }
 
-        .populate(
-          "uploaded_by",
-          "name email role"
+      // =================================================
+      // CAMPAIGN ACCESS
+      // =================================================
+
+      const accessResult =
+        await requireCampaignAccess(
+          req,
+          res
         );
 
+      if (accessResult.error) {
+        return accessResult.response;
+      }
 
-    // ========================================
-    // NOT FOUND
-    // ========================================
+      const {
+        campaignId,
+        access,
+      } = accessResult;
 
-    if (!submission) {
+      // =================================================
+      // FIND SUBMISSION
+      // =================================================
 
-      return res.status(404).json({
+      const submission =
+        await SiteSubmission.findOne({
+          _id: id,
 
+          campaign_id:
+            campaignId,
+        })
+          .populate(
+            "site"
+          )
+          .populate(
+            "submitted_by",
+            "name email role"
+          )
+          .populate(
+            "uploaded_by",
+            "name email role"
+          )
+          .populate(
+            "vendor",
+            "name email role"
+          )
+          .populate(
+            "state_head",
+            "name email role"
+          )
+          .populate(
+            "client",
+            "name email role"
+          )
+          .lean();
+
+      if (!submission) {
+        return res.status(404).json({
+          success: false,
+
+          message:
+            "Submission not found in this campaign",
+        });
+      }
+
+      // =================================================
+      // NON ADMIN ACCESS
+      // =================================================
+
+      if (
+        req.user.role !== "admin"
+      ) {
+        if (!submission.site) {
+          return res.status(404).json({
+            success: false,
+
+            message:
+              "Site not found",
+          });
+        }
+
+        const siteFilter =
+          buildAssignedSiteFilter(
+            access
+          );
+
+        const assignedSite =
+          await Site.findOne({
+            _id:
+              submission.site._id,
+
+            campaign_id:
+              campaignId,
+
+            ...siteFilter,
+          });
+
+        if (!assignedSite) {
+          return res.status(403).json({
+            success: false,
+
+            message:
+              "You are not allowed to view this submission",
+          });
+        }
+      }
+
+      // =================================================
+      // RESPONSE
+      // =================================================
+
+      return res.json({
+        success: true,
+
+        campaign_id:
+          campaignId,
+
+        submission,
+      });
+    } catch (error) {
+      console.error(
+        "GET SUBMISSION BY ID ERROR:",
+        error
+      );
+
+      return res.status(500).json({
         success: false,
 
         message:
-          "Submission not found",
-
+          error.message ||
+          "Failed to get submission",
       });
-
     }
+  };
 
+// =====================================================
+// SUBMIT SITE
+//
+// POST /api/submissions
+//
+// IMPORTANT:
+//
+// Every upload creates a NEW submission.
+//
+// Same campaign + same site:
+//
+// Upload 1 -> Submission 1
+// Upload 2 -> Submission 2
+// Upload 3 -> Submission 3
+//
+// Previous submissions are NOT updated.
+// =====================================================
 
-    // ========================================
-    // RESPONSE
-    // ========================================
-
-    return res.status(200).json({
-
-      success: true,
-
-      submission,
-
-    });
-
-  } catch (error) {
-
-    console.error(
-      "GET SUBMISSION BY ID ERROR:",
-      error
-    );
-
-    return res.status(500).json({
-
-      success: false,
-
-      message:
-        error.message ||
-        "Failed to get submission",
-
-    });
-
-  }
-
-};
-
-
-// ======================================================
-// SUBMIT / RE-UPLOAD SITE
-// ======================================================
-
-const submitSite = async (req, res) => {
-
+const submitSite = async (
+  req,
+  res
+) => {
   try {
-
-    // ========================================
-    // AUTH USER
-    // ========================================
+    // =================================================
+    // USER
+    // =================================================
 
     const userId =
       getUserId(req);
 
-
-    console.log(
-      "===================================="
-    );
-
-    console.log(
-      "SUBMIT SITE USER:",
-      req.user
-    );
-
-    console.log(
-      "SUBMIT SITE USER ID:",
-      userId
-    );
-
-    console.log(
-      "SUBMIT SITE USER ROLE:",
-      req.user?.role
-    );
-
-    console.log(
-      "===================================="
-    );
-
-
-    // ========================================
-    // AUTH CHECK
-    // ========================================
-
     if (!userId) {
-
       return res.status(401).json({
-
         success: false,
 
         message:
-          "User authentication failed. User ID not found.",
-
+          "User authentication failed",
       });
-
     }
 
-
-    // ========================================
-    // ROLE CHECK
-    // ========================================
-
-    const allowedRoles = [
-      "vendor_executive",
-      "admin",
-    ];
+    // =================================================
+    // ROLE
+    // =================================================
 
     if (
-      req.user?.role &&
-      !allowedRoles.includes(
+      ![
+        "vendor_executive",
+        "admin",
+      ].includes(
         req.user.role
       )
     ) {
-
       return res.status(403).json({
-
         success: false,
 
         message:
-          "You are not allowed to submit a site.",
-
+          "You are not allowed to submit a site",
       });
-
     }
 
+    // =================================================
+    // CAMPAIGN ACCESS
+    // =================================================
 
-    // ========================================
-    // REQUEST BODY
-    // ========================================
+    const accessResult =
+      await requireCampaignAccess(
+        req,
+        res
+      );
+
+    if (accessResult.error) {
+      return accessResult.response;
+    }
 
     const {
-      site_id,
-      person_name,
-    } = req.body;
+      campaignId,
+      access,
+    } = accessResult;
 
+    // =================================================
+    // BODY
+    // =================================================
 
-    // ========================================
-    // VALIDATE SITE ID
-    // ========================================
+    const site_id =
+      req.body?.site_id;
+
+    const person_name =
+      req.body?.person_name;
+
+    // =================================================
+    // SITE ID VALIDATION
+    // =================================================
 
     if (!site_id) {
-
       return res.status(400).json({
-
         success: false,
 
         message:
           "site_id is required",
-
       });
-
     }
-
 
     if (
       !mongoose.Types.ObjectId.isValid(
         site_id
       )
     ) {
-
       return res.status(400).json({
-
         success: false,
 
         message:
           "Invalid site_id",
-
       });
-
     }
 
+    // =================================================
+    // PERSON NAME VALIDATION
+    // =================================================
 
-    // ========================================
-    // VALIDATE PERSON NAME
-    // ========================================
-
-    if (!person_name?.trim()) {
-
+    if (
+      !person_name ||
+      !String(
+        person_name
+      ).trim()
+    ) {
       return res.status(400).json({
-
         success: false,
 
         message:
           "person_name is required",
-
       });
-
     }
 
-
-    // ========================================
+    // =================================================
     // FIND SITE
-    // ========================================
+    // =================================================
 
     const site =
-      await Site.findById(site_id);
+      await Site.findOne({
+        _id: site_id,
 
+        campaign_id:
+          campaignId,
+
+        ...(req.user.role ===
+        "admin"
+          ? {}
+          : buildAssignedSiteFilter(
+              access
+            )),
+      });
 
     if (!site) {
-
       return res.status(404).json({
-
         success: false,
 
         message:
-          "Site not found",
-
+          "Site not found or not assigned to you in this campaign",
       });
-
     }
 
-
-    // ========================================
-    // SAVE OLD STATUS
-    // ========================================
-
-    const oldStatus =
-      site.status;
-
-
-    // ========================================
+    // =================================================
     // FILES
-    // ========================================
+    // =================================================
 
     const selfie =
       req.files?.selfie?.[0];
 
     const siteImages =
-      req.files?.site_images || [];
+      req.files?.site_images ||
+      [];
 
-
-    // ========================================
-    // SELFIE VALIDATION
-    // ========================================
+    // =================================================
+    // SELFIE
+    // =================================================
 
     if (!selfie) {
-
       return res.status(400).json({
-
         success: false,
 
         message:
           "Selfie is required",
-
       });
-
     }
 
-
-    // ========================================
-    // SITE IMAGE VALIDATION
-    // ========================================
+    // =================================================
+    // SITE IMAGES
+    // =================================================
 
     if (
-      !siteImages.length
+      siteImages.length === 0
     ) {
-
       return res.status(400).json({
-
         success: false,
 
         message:
           "At least one site image is required",
-
       });
-
     }
 
-
-    // ========================================
-    // SELFIE PATH
-    // ========================================
-
-    if (!selfie.path) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message:
-          "Selfie file path not found",
-
-      });
-
-    }
-
+    // =================================================
+    // FILE PATHS
+    // =================================================
 
     const selfiePath =
       normalizeUploadPath(
         selfie.path
       );
 
-
-    // ========================================
-    // SITE IMAGE PATHS
-    // ========================================
-
     const imagePaths =
       siteImages.map(
-        (file) => {
-
-          if (!file.path) {
-
-            throw new Error(
-              "Site image file path not found"
-            );
-
-          }
-
-          return normalizeUploadPath(
+        (file) =>
+          normalizeUploadPath(
             file.path
-          );
-
-        }
+          )
       );
 
+    // =================================================
+    // OLD SITE STATUS
+    // =================================================
+
+    const oldStatus =
+      site.status;
+
+    // =================================================
+    // FIND LAST SUBMISSION
+    //
+    // ONLY TO CALCULATE VERSION.
+    //
+    // We DO NOT BLOCK UPLOAD.
+    // =================================================
+
+    const lastSubmission =
+      await SiteSubmission.findOne({
+        campaign_id:
+          campaignId,
+
+        site:
+          site._id,
+      })
+        .sort({
+          upload_version: -1,
+          createdAt: -1,
+        })
+        .select(
+          "_id upload_version"
+        )
+        .lean();
+
+    // =================================================
+    // NEXT VERSION
+    // =================================================
+
+    const nextUploadVersion =
+      lastSubmission
+        ? Number(
+            lastSubmission.upload_version ||
+              1
+          ) + 1
+        : 1;
 
     console.log(
-      "SELFIE PATH:",
-      selfiePath
+      "========================================"
     );
 
     console.log(
-      "SITE IMAGE PATHS:",
-      imagePaths
+      "NEW SITE SUBMISSION"
     );
 
+    console.log(
+      "CAMPAIGN:",
+      campaignId
+    );
 
-    // ========================================
-    // CREATE SUBMISSION
-    // ========================================
+    console.log(
+      "SITE:",
+      site._id
+    );
+
+    console.log(
+      "PREVIOUS SUBMISSION:",
+      lastSubmission?._id ||
+        "NONE"
+    );
+
+    console.log(
+      "NEW VERSION:",
+      nextUploadVersion
+    );
+
+    console.log(
+      "========================================"
+    );
+
+    // =================================================
+    // CREATE NEW SUBMISSION
+    //
+    // NEVER UPDATE OLD SUBMISSION
+    // =================================================
 
     const submission =
       await SiteSubmission.create({
+        campaign_id:
+          campaignId,
 
         site:
           site._id,
 
-        // IMPORTANT
         submitted_by:
           userId,
 
@@ -679,7 +722,9 @@ const submitSite = async (req, res) => {
           req.user.role,
 
         person_name:
-          person_name.trim(),
+          String(
+            person_name
+          ).trim(),
 
         selfie:
           selfiePath,
@@ -687,24 +732,85 @@ const submitSite = async (req, res) => {
         site_images:
           imagePaths,
 
-        uploaded_at:
-          new Date(),
+        remarks:
+          "",
+
+        // =================================================
+        // VENDOR
+        // =================================================
+
+        vendor:
+          null,
+
+        vendor_status:
+          "pending",
+
+        vendor_remarks:
+          "",
+
+        vendor_action_at:
+          null,
+
+        // =================================================
+        // STATE HEAD
+        // =================================================
+
+        state_head:
+          null,
+
+        state_head_status:
+          "pending",
+
+        state_head_remarks:
+          "",
+
+        state_head_action_at:
+          null,
+
+        // =================================================
+        // CLIENT
+        // =================================================
+
+        client:
+          null,
+
+        // =================================================
+        // STATUS
+        // =================================================
 
         status:
           "pending_vendor_approval",
 
+        // =================================================
+        // VERSION
+        // =================================================
+
+        upload_version:
+          nextUploadVersion,
+
+        // =================================================
+        // DATES
+        // =================================================
+
+        uploaded_at:
+          new Date(),
+
+        reuploaded_at:
+          nextUploadVersion > 1
+            ? new Date()
+            : null,
+
+        approved_at:
+          null,
       });
 
-
-    console.log(
-      "SUBMISSION CREATED:",
-      submission._id
-    );
-
-
-    // ========================================
+    // =================================================
     // UPDATE SITE
-    // ========================================
+    //
+    // Only latest submission is stored here.
+    //
+    // Old submissions remain in DB.
+    // =================================================
 
     site.status =
       "pending_vendor_approval";
@@ -712,14 +818,28 @@ const submitSite = async (req, res) => {
     site.current_submission =
       submission._id;
 
+    await site.save();
 
-    // ========================================
-    // CREATE HISTORY
-    // ========================================
+    // =================================================
+    // HISTORY REMARKS
+    // =================================================
+
+    let remarks =
+      "Site submitted by vendor executive";
+
+    if (
+      nextUploadVersion > 1
+    ) {
+      remarks =
+        `New submission uploaded by vendor executive (Version ${nextUploadVersion})`;
+    }
+
+    // =================================================
+    // HISTORY
+    // =================================================
 
     const history =
       await createHistory({
-
         site,
 
         submission,
@@ -733,288 +853,282 @@ const submitSite = async (req, res) => {
         actionByRole:
           req.user.role,
 
-        remarks:
-
-          oldStatus ===
-          "vendor_rejected"
-
-            ? "Site re-uploaded after vendor rejection"
-
-            : oldStatus ===
-              "state_head_rejected"
-
-              ? "Site re-uploaded after state head rejection"
-
-              : "Site submitted by vendor executive",
+        remarks,
 
         oldStatus,
 
         newStatus:
           "pending_vendor_approval",
-
       });
 
-
-    // ========================================
-    // SUCCESS
-    // ========================================
+    // =================================================
+    // RESPONSE
+    // =================================================
 
     return res.status(201).json({
-
       success: true,
 
       message:
-
-        oldStatus ===
-          "vendor_rejected" ||
-
-        oldStatus ===
-          "state_head_rejected"
-
-          ? "Site re-uploaded successfully"
-
+        nextUploadVersion > 1
+          ? "New submission uploaded successfully"
           : "Site submitted successfully",
+
+      campaign_id:
+        campaignId,
+
+      site_id:
+        site._id,
+
+      submission_id:
+        submission._id,
+
+      upload_version:
+        nextUploadVersion,
 
       submission,
 
       history,
-
     });
-
   } catch (error) {
-
     console.error(
-      "===================================="
-    );
-
-    console.error(
-      "SUBMIT SITE ERROR:"
-    );
-
-    console.error(
+      "SUBMIT SITE ERROR:",
       error
     );
 
-    console.error(
-      "===================================="
-    );
-
-
-    // ========================================
-    // MONGOOSE VALIDATION ERROR
-    // ========================================
+    // =================================================
+    // VALIDATION ERROR
+    // =================================================
 
     if (
       error.name ===
       "ValidationError"
     ) {
-
       const errors = {};
 
       Object.keys(
         error.errors
       ).forEach(
         (key) => {
-
           errors[key] =
             error.errors[key].message;
-
         }
       );
 
       return res.status(400).json({
-
         success: false,
 
         message:
           "Validation failed",
 
         errors,
-
       });
-
     }
 
+    // =================================================
+    // DUPLICATE KEY
+    // =================================================
 
-    // ========================================
+    if (
+      error.code === 11000
+    ) {
+      console.error(
+        "DUPLICATE KEY ERROR:",
+        error
+      );
+
+      return res.status(409).json({
+        success: false,
+
+        message:
+          "Duplicate submission index exists in MongoDB. Please remove the old unique campaign_id + site index.",
+
+        campaign_id:
+          error?.keyValue?.campaign_id,
+
+        site_id:
+          error?.keyValue?.site,
+      });
+    }
+
+    // =================================================
     // GENERAL ERROR
-    // ========================================
+    // =================================================
 
     return res.status(500).json({
-
       success: false,
 
       message:
         error.message ||
         "Failed to submit site",
-
     });
-
   }
-
 };
 
+// =====================================================
+// GET SITE SUBMISSIONS / HISTORY
+//
+// GET /api/submissions/site/:siteId/history
+//
+// ?campaign_id=xxx
+//
+// Returns ALL submissions of this site
+// in this campaign.
+// =====================================================
 
-// ======================================================
-// GET ALL SUBMISSIONS OF A PARTICULAR SITE
-// ======================================================
+const getSiteSubmissions =
+  async (req, res) => {
+    try {
+      const {
+        siteId,
+      } = req.params;
 
-const getSiteSubmissions = async (
-  req,
-  res
-) => {
+      // =================================================
+      // SITE ID VALIDATION
+      // =================================================
 
-  try {
-
-    const { siteId } =
-      req.params;
-
-
-    // ========================================
-    // VALIDATE SITE ID
-    // ========================================
-
-    if (!siteId) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message:
-          "siteId is required",
-
-      });
-
-    }
-
-
-    if (
-      !mongoose.Types.ObjectId.isValid(
-        siteId
-      )
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message:
-          "Invalid siteId",
-
-      });
-
-    }
-
-
-    // ========================================
-    // GET SUBMISSIONS
-    // ========================================
-
-    const submissions =
-      await SiteSubmission.find({
-
-        site:
-          siteId,
-
-      })
-
-        // ========================================
-        // SUBMITTED BY
-        // ========================================
-
-        .populate(
-          "submitted_by",
-          "name email role"
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          siteId
         )
+      ) {
+        return res.status(400).json({
+          success: false,
 
-        // ========================================
-        // UPLOADED BY
-        // ========================================
+          message:
+            "Invalid siteId",
+        });
+      }
 
-        .populate(
-          "uploaded_by",
-          "name email role"
-        )
+      // =================================================
+      // CAMPAIGN ACCESS
+      // =================================================
 
-        .populate(
-          "site",
-          `
-            site_name
-            site_code
-            state
-            town
-            zone
-            vendor
-            vendor_name
-            location
-            media_type
-            type
-            unit
-            duration
-            width
-            height
-            total_sqr_ft
-            lat
-            long
-            status
-            current_submission
-          `
-        )
+      const accessResult =
+        await requireCampaignAccess(
+          req,
+          res
+        );
 
-        .sort({
-          createdAt: -1,
+      if (accessResult.error) {
+        return accessResult.response;
+      }
+
+      const {
+        campaignId,
+        access,
+      } = accessResult;
+
+      // =================================================
+      // FIND SITE
+      // =================================================
+
+      const site =
+        await Site.findOne({
+          _id:
+            siteId,
+
+          campaign_id:
+            campaignId,
+
+          ...(req.user.role ===
+          "admin"
+            ? {}
+            : buildAssignedSiteFilter(
+                access
+              )),
         });
 
+      if (!site) {
+        return res.status(404).json({
+          success: false,
 
-    // ========================================
-    // RESPONSE
-    // ========================================
+          message:
+            "Site not found or not assigned to you in this campaign",
+        });
+      }
 
-    return res.status(200).json({
+      // =================================================
+      // GET ALL SUBMISSIONS
+      // =================================================
 
-      success: true,
+      const submissions =
+        await SiteSubmission.find({
+          site:
+            siteId,
 
-      count:
-        submissions.length,
+          campaign_id:
+            campaignId,
+        })
+          .populate(
+            "site"
+          )
+          .populate(
+            "submitted_by",
+            "name email role"
+          )
+          .populate(
+            "uploaded_by",
+            "name email role"
+          )
+          .populate(
+            "vendor",
+            "name email role"
+          )
+          .populate(
+            "state_head",
+            "name email role"
+          )
+          .populate(
+            "client",
+            "name email role"
+          )
+          .sort({
+            upload_version: -1,
+            createdAt: -1,
+          })
+          .lean();
 
-      submissions,
+      // =================================================
+      // RESPONSE
+      // =================================================
 
-    });
+      return res.json({
+        success: true,
 
-  } catch (error) {
+        campaign_id:
+          campaignId,
 
-    console.error(
-      "GET SITE SUBMISSIONS ERROR:",
-      error
-    );
+        site_id:
+          siteId,
 
-    return res.status(500).json({
+        count:
+          submissions.length,
 
-      success: false,
+        submissions,
+      });
+    } catch (error) {
+      console.error(
+        "GET SITE SUBMISSIONS ERROR:",
+        error
+      );
 
-      message:
-        error.message ||
-        "Failed to get site submissions",
+      return res.status(500).json({
+        success: false,
 
-    });
+        message:
+          error.message ||
+          "Failed to get site submissions",
+      });
+    }
+  };
 
-  }
-
-};
-
-
-// ======================================================
+// =====================================================
 // EXPORT
-// ======================================================
+// =====================================================
 
 module.exports = {
-
   submitSite,
-
   getSiteSubmissions,
-
   getMySubmissions,
-
   getSubmissionById,
-
 };

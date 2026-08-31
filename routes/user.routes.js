@@ -1,121 +1,87 @@
 const express = require("express");
 
-const authMiddleware =
-    require("../middleware/auth.middleware");
-
-const roleMiddleware =
-    require("../middleware/role.middleware");
-
-const userController =
-    require("../controllers/user.controller");
-
-
-console.log(
-    "USER CONTROLLER:",
-    userController
-);
-
-console.log(
-    "createUser:",
-    typeof userController.createUser
-);
-
-console.log(
-    "getUsers:",
-    typeof userController.getUsers
-);
-
-console.log(
-    "getUserById:",
-    typeof userController.getUserById
-);
-
-console.log(
-    "updateUser:",
-    typeof userController.updateUser
-);
-
-console.log(
-    "updateUserStatus:",
-    typeof userController.updateUserStatus
-);
-
-console.log(
-    "deleteUser:",
-    typeof userController.deleteUser
-);
-
-console.log(
-    "authMiddleware:",
-    typeof authMiddleware
-);
-
-console.log(
-    "roleMiddleware:",
-    typeof roleMiddleware
-);
-
-
 const router = express.Router();
 
+const authMiddleware = require("../middleware/auth.middleware");
 
+const roleMiddleware = require("../middleware/role.middleware");
+
+const userController = require("../controllers/user.controller");
+
+// =====================================================
 // CREATE USER
+// POST /api/users
+// =====================================================
 
 router.post(
-    "/",
-    authMiddleware,
-    roleMiddleware("admin"),
-    userController.createUser
+  "/",
+  authMiddleware,
+  roleMiddleware("admin"),
+  userController.createUser
 );
 
-
+// =====================================================
 // GET USERS
+// GET /api/users
+//
+// Optional:
+// /api/users?campaign_id=CAMPAIGN_ID
+// /api/users?role=vendor_executive
+// /api/users?search=rahul
+// =====================================================
 
 router.get(
-    "/",
-    authMiddleware,
-    roleMiddleware("admin"),
-    userController.getUsers
+  "/",
+  authMiddleware,
+  roleMiddleware("admin"),
+  userController.getUsers
 );
 
-
-// GET USER
+// =====================================================
+// GET USER BY ID
+// GET /api/users/:id
+// =====================================================
 
 router.get(
-    "/:id",
-    authMiddleware,
-    userController.getUserById
+  "/:id",
+  authMiddleware,
+  userController.getUserById
 );
 
-
+// =====================================================
 // UPDATE USER
+// PUT /api/users/:id
+// =====================================================
 
 router.put(
-    "/:id",
-    authMiddleware,
-    roleMiddleware("admin"),
-    userController.updateUser
+  "/:id",
+  authMiddleware,
+  roleMiddleware("admin"),
+  userController.updateUser
 );
 
-
-// STATUS
+// =====================================================
+// UPDATE USER STATUS
+// PATCH /api/users/:id/status
+// =====================================================
 
 router.patch(
-    "/:id/status",
-    authMiddleware,
-    roleMiddleware("admin"),
-    userController.updateUserStatus
+  "/:id/status",
+  authMiddleware,
+  roleMiddleware("admin"),
+  userController.updateUserStatus
 );
 
-
-// DELETE
+// =====================================================
+// DELETE USER
+// DELETE /api/users/:id
+// =====================================================
 
 router.delete(
-    "/:id",
-    authMiddleware,
-    roleMiddleware("admin"),
-    userController.deleteUser
+  "/:id",
+  authMiddleware,
+  roleMiddleware("admin"),
+  userController.deleteUser
 );
-
 
 module.exports = router;

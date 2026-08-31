@@ -1,19 +1,15 @@
 const express = require("express");
 
-const authMiddleware =
-  require("../middleware/auth.middleware");
-
-const roleMiddleware =
-  require("../middleware/role.middleware");
-
-const campaignController =
-  require("../controllers/campaign.controller");
-
 const router = express.Router();
 
+const authMiddleware = require("../middleware/auth.middleware");
+const roleMiddleware = require("../middleware/role.middleware");
+
+const campaignController = require("../controllers/campaign.controller");
 
 // =====================================================
 // CREATE CAMPAIGN
+// POST /api/campaigns
 // =====================================================
 
 router.post(
@@ -23,9 +19,15 @@ router.post(
   campaignController.createCampaign
 );
 
-
 // =====================================================
 // GET ALL CAMPAIGNS
+// GET /api/campaigns
+//
+// Admin:
+//    All campaigns
+//
+// Other users:
+//    Only campaigns assigned to them
 // =====================================================
 
 router.get(
@@ -34,9 +36,9 @@ router.get(
   campaignController.getCampaigns
 );
 
-
 // =====================================================
 // GET CAMPAIGN BY ID
+// GET /api/campaigns/:id
 // =====================================================
 
 router.get(
@@ -45,9 +47,9 @@ router.get(
   campaignController.getCampaignById
 );
 
-
 // =====================================================
 // UPDATE CAMPAIGN
+// PUT /api/campaigns/:id
 // =====================================================
 
 router.put(
@@ -57,9 +59,9 @@ router.put(
   campaignController.updateCampaign
 );
 
-
 // =====================================================
-// UPDATE STATUS
+// UPDATE CAMPAIGN STATUS
+// PATCH /api/campaigns/:id/status
 // =====================================================
 
 router.patch(
@@ -69,9 +71,9 @@ router.patch(
   campaignController.updateCampaignStatus
 );
 
-
 // =====================================================
 // DELETE CAMPAIGN
+// DELETE /api/campaigns/:id
 // =====================================================
 
 router.delete(
@@ -80,6 +82,5 @@ router.delete(
   roleMiddleware("admin"),
   campaignController.deleteCampaign
 );
-
 
 module.exports = router;
