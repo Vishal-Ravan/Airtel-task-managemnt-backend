@@ -37,7 +37,7 @@ const createAdmin = async () => {
     const admin = await User.create({
       name: "System Admin",
       email,
-      phone:"76829372689",
+      phone:"7562939752",
       password: hashedPassword,
       role: "admin",
       is_active: true,
