@@ -714,73 +714,123 @@ const resendVerification = async (
 // LOGIN
 // =====================================================
 
-const login = async (req, res) => {
+const login = async (
+  req,
+  res
+) => {
+
   try {
-    const { email, password } = req.body;
+
+    const {
+      email,
+      password,
+    } = req.body;
+
 
     // =================================================
     // VALIDATION
     // =================================================
 
-    if (!email || !password) {
+    if (
+      !email ||
+      !password
+    ) {
+
       return res.status(400).json({
+
         success: false,
-        message: "Email and password are required",
+
+        message:
+          "Email and password are required",
       });
     }
+
 
     // =================================================
     // FIND USER
     // =================================================
 
-    const user = await User.findOne({
-      email: email.toLowerCase().trim(),
-    }).select("+password");
+    const user =
+      await User.findOne({
+
+        email:
+          email
+            .toLowerCase()
+            .trim(),
+
+      }).select(
+        "+password"
+      );
+
 
     if (!user) {
+
       return res.status(401).json({
+
         success: false,
-        message: "Invalid email or password",
+
+        message:
+          "Invalid email or password",
       });
     }
+
 
     // =================================================
     // ACTIVE USER
     // =================================================
 
     if (!user.is_active) {
+
       return res.status(403).json({
+
         success: false,
-        message: "Your account is inactive",
+
+        message:
+          "Your account is inactive",
       });
     }
+
 
     // =================================================
     // EMAIL VERIFIED
     // =================================================
 
-    if (!user.is_email_verified) {
+    if (
+      !user.is_email_verified
+    ) {
+
       return res.status(403).json({
+
         success: false,
-        message: "Please verify your email before login",
+
+        message:
+          "Please verify your email before login",
       });
     }
+
 
     // =================================================
     // PASSWORD
     // =================================================
 
-    const passwordMatch = await bcrypt.compare(
-      password,
-      user.password
-    );
+    const passwordMatch =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
+
 
     if (!passwordMatch) {
+
       return res.status(401).json({
+
         success: false,
-        message: "Invalid email or password",
+
+        message:
+          "Invalid email or password",
       });
     }
+
 
     // =================================================
     // CAMPAIGN ACCESS
@@ -788,71 +838,161 @@ const login = async (req, res) => {
 
     let campaignAccess = [];
 
-    // =================================================
-    // ADMIN
-    // =================================================
-    // Admin does NOT need campaign assignment.
-    // Admin can create/manage campaigns.
-    // =================================================
 
-    if (user.role === "admin") {
-      campaignAccess = [];
+    // -------------------------------------------------
+    // ADMIN
+    // -------------------------------------------------
+    //
+    // Admin gets all active campaigns.
+    //
+    // -------------------------------------------------
+
+    if (
+      user.role === "admin"
+    ) {
+
+      const activeCampaigns =
+        await Campaign.find({
+
+          status:
+            "active",
+
+        })
+          .select(
+            "_id name code description status"
+          )
+          .sort({
+            createdAt:
+              -1,
+          })
+          .lean();
+
+
+      campaignAccess =
+        activeCampaigns.map(
+          (campaign) => ({
+
+            _id:
+              null,
+
+            campaign_id:
+              campaign._id,
+
+            campaign: {
+              _id:
+                campaign._id,
+
+              name:
+                campaign.name,
+
+              code:
+                campaign.code,
+
+              description:
+                campaign.description,
+
+              status:
+                campaign.status,
+            },
+
+            role:
+              "admin",
+
+            locations: [],
+
+            site_codes: [],
+
+            is_active:
+              true,
+          })
+        );
+
     }
 
-    // =================================================
+    // -------------------------------------------------
     // NON ADMIN
-    // =================================================
+    // -------------------------------------------------
 
     else {
-      campaignAccess = await getUserCampaignAccess(user._id);
 
-      // Normal users must have at least
-      // one active campaign assigned.
+      campaignAccess =
+        await getUserCampaignAccess(
+          user._id
+        );
 
-      if (campaignAccess.length === 0) {
+
+      // ==============================================
+      // USER MUST HAVE AT LEAST ONE ACTIVE CAMPAIGN
+      // ==============================================
+
+      if (
+        campaignAccess.length === 0
+      ) {
+
         return res.status(403).json({
+
           success: false,
+
           message:
             "No active campaign has been assigned to this user",
         });
       }
     }
 
+
     // =================================================
     // LAST LOGIN
     // =================================================
 
-    user.last_login = new Date();
+    user.last_login =
+      new Date();
 
     await user.save();
+
 
     // =================================================
     // TOKEN
     // =================================================
 
-    const token = generateAccessToken(user);
+    const token =
+      generateAccessToken(
+        user
+      );
+
 
     // =================================================
     // RESPONSE
     // =================================================
 
     return res.json({
+
       success: true,
-      message: "Login successful",
+
+      message:
+        "Login successful",
+
       token,
 
-      user: sanitizeUser(
-        user,
-        campaignAccess
-      ),
+      user:
+        sanitizeUser(
+          user,
+          campaignAccess
+        ),
     });
 
   } catch (error) {
-    console.error("LOGIN ERROR:", error);
+
+    console.error(
+      "LOGIN ERROR:",
+      error
+    );
 
     return res.status(500).json({
+
       success: false,
-      message: "Login failed",
+
+      message:
+        "Login failed",
     });
   }
 };
