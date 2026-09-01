@@ -12,7 +12,7 @@ const generateAccessToken = (user) => {
 
         {
             expiresIn:
-                process.env.JWT_EXPIRES_IN || "1m"
+                process.env.JWT_EXPIRES_IN || "1h"
         }
     );
 };
