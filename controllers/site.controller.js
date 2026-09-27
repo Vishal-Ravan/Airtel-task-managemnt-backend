@@ -1767,18 +1767,18 @@ const getSiteById = async (
       });
     }
 
-    if (
-      req.user.role ===
-        "client" &&
-      site.status !==
-        "approved"
-    ) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "This site is not approved",
-      });
-    }
+    // if (
+    //   req.user.role ===
+    //     "client" &&
+    //   site.status !==
+    //     "approved"
+    // ) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message:
+    //       "This site is not approved",
+    //   });
+    // }
 
     return res.json({
       success: true,
